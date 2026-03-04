@@ -5,6 +5,7 @@ import Link from 'next/link';
 import styles from './ideas.module.css';
 
 const TELEGRAM_SPARKY_TOPIC = 'https://t.me/c/3703177695/765';
+const PAGE_SIZE = 20;
 
 const TABS = [
   { key: 'new', label: 'New', query: { status: 'new', sort: 'created_at' } },
@@ -13,6 +14,13 @@ const TABS = [
   { key: 'saved', label: 'Saved', query: { status: 'saved', sort: 'updated_at' } },
   { key: 'building', label: 'Building', query: { status: 'building', sort: 'updated_at' } },
   { key: 'archived', label: 'Archive', query: { status: 'archived', sort: 'updated_at' } }
+];
+
+const SORT_OPTIONS = [
+  { key: 'created_at', label: 'Newest' },
+  { key: 'updated_at', label: 'Recently updated' },
+  { key: 'edge_score', label: 'Highest edge score' },
+  { key: 'reality_score', label: 'Highest reality score' }
 ];
 
 function scoreClass(value, max) {
@@ -43,25 +51,47 @@ function formatDate(value) {
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
+function compactTelemetry(telemetry) {
+  if (!telemetry) return '';
+  const status = telemetry.upstreamStatus ?? 'n/a';
+  const duration = telemetry.durationMs ?? '--';
+  const proposal = telemetry.proposalId ? ` · proposal ${telemetry.proposalId}` : '';
+  return `Approve telemetry: upstream ${status}, ${duration}ms${proposal}`;
+}
+
 export default function IdeasDashboardClient() {
   const [tab, setTab] = useState('new');
   const [query, setQuery] = useState('');
+  const [sort, setSort] = useState('created_at');
+  const [page, setPage] = useState(1);
   const [ideas, setIdeas] = useState([]);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [info, setInfo] = useState('');
   const [expanded, setExpanded] = useState({});
   const [busyMap, setBusyMap] = useState({});
   const [noteMap, setNoteMap] = useState({});
 
   const activeTab = useMemo(() => TABS.find((x) => x.key === tab) || TABS[0], [tab]);
+  const totalPages = Math.max(1, Math.ceil((total || 0) / PAGE_SIZE));
+  const offset = (page - 1) * PAGE_SIZE;
+
+  useEffect(() => {
+    const defaultSort = activeTab?.query?.sort || 'created_at';
+    setSort(defaultSort);
+    setPage(1);
+  }, [tab]);
 
   async function loadIdeas() {
     setLoading(true);
     setError('');
     try {
       const params = new URLSearchParams({
-        limit: '120',
-        ...(activeTab.query || {}),
+        limit: String(PAGE_SIZE),
+        offset: String(offset),
+        sort,
+        ...(activeTab.query?.status ? { status: activeTab.query.status } : {}),
         ...(query.trim() ? { q: query.trim() } : {})
       });
       const res = await fetch(`/api/ideas?${params.toString()}`, { cache: 'no-store' });
@@ -70,6 +100,7 @@ export default function IdeasDashboardClient() {
 
       const list = Array.isArray(data.ideas) ? data.ideas : [];
       setIdeas(list);
+      setTotal(Number(data.total || list.length || 0));
       setNoteMap((prev) => {
         const next = { ...prev };
         for (const idea of list) {
@@ -82,6 +113,7 @@ export default function IdeasDashboardClient() {
     } catch (err) {
       setError(String(err.message || err));
       setIdeas([]);
+      setTotal(0);
     } finally {
       setLoading(false);
     }
@@ -90,7 +122,7 @@ export default function IdeasDashboardClient() {
   useEffect(() => {
     const id = setTimeout(loadIdeas, 180);
     return () => clearTimeout(id);
-  }, [tab, query]);
+  }, [tab, query, sort, page]);
 
   async function patchIdea(id, patch) {
     setBusyMap((prev) => ({ ...prev, [id]: true }));
@@ -117,6 +149,8 @@ export default function IdeasDashboardClient() {
 
   async function approveIdea(id) {
     setBusyMap((prev) => ({ ...prev, [id]: true }));
+    setInfo('');
+
     try {
       const feedback = (noteMap[id] || '').trim();
       const payload = feedback ? { feedback_notes: feedback } : undefined;
@@ -127,11 +161,17 @@ export default function IdeasDashboardClient() {
         body: payload ? JSON.stringify(payload) : undefined
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data?.detail || data?.error || 'approve failed');
+      if (!res.ok) {
+        const telemetryText = compactTelemetry(data?.telemetry);
+        throw new Error([data?.detail || data?.error || 'approve failed', telemetryText].filter(Boolean).join(' | '));
+      }
 
       if (data?.idea) {
         setNoteMap((prev) => ({ ...prev, [id]: data.idea.feedback_notes || '' }));
       }
+
+      const telemetryText = compactTelemetry(data?.telemetry);
+      if (telemetryText) setInfo(telemetryText);
 
       await loadIdeas();
     } catch (err) {
@@ -175,6 +215,16 @@ export default function IdeasDashboardClient() {
     }
   }
 
+  function onSearchChange(next) {
+    setQuery(next);
+    setPage(1);
+  }
+
+  function onSortChange(nextSort) {
+    setSort(nextSort);
+    setPage(1);
+  }
+
   return (
     <main className={styles.page}>
       <div className={styles.header}>
@@ -187,7 +237,7 @@ export default function IdeasDashboardClient() {
         <input
           className={styles.search}
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => onSearchChange(e.target.value)}
           placeholder="Search title + description + feedback"
           aria-label="Search ideas"
         />
@@ -206,7 +256,22 @@ export default function IdeasDashboardClient() {
         ))}
       </div>
 
+      <div className={styles.controlsRow}>
+        <label className={styles.controlItem}>
+          Sort
+          <select className={styles.select} value={sort} onChange={(e) => onSortChange(e.target.value)}>
+            {SORT_OPTIONS.map((opt) => (
+              <option key={opt.key} value={opt.key}>{opt.label}</option>
+            ))}
+          </select>
+        </label>
+        <div className={styles.paginationMeta}>
+          Showing {ideas.length ? offset + 1 : 0}-{Math.min(offset + ideas.length, total)} of {total}
+        </div>
+      </div>
+
       {error ? <div className={styles.error}>Error: {error}</div> : null}
+      {info ? <div className={styles.info}>{info}</div> : null}
 
       {loading ? <p className={styles.loader}>Loading ideas...</p> : null}
 
@@ -362,6 +427,16 @@ export default function IdeasDashboardClient() {
             </article>
           );
         })}
+      </div>
+
+      <div className={styles.paginationRow}>
+        <button className={styles.btn} disabled={page <= 1 || loading} onClick={() => setPage((p) => Math.max(1, p - 1))}>
+          ← Previous
+        </button>
+        <span className={styles.paginationMeta}>Page {page} / {totalPages}</span>
+        <button className={styles.btn} disabled={page >= totalPages || loading} onClick={() => setPage((p) => Math.min(totalPages, p + 1))}>
+          Next →
+        </button>
       </div>
     </main>
   );

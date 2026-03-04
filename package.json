@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build && node scripts/prepare-standalone.mjs",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "seed:ideas": "node scripts/seed-ideas-from-csv.mjs"
   },
   "dependencies": {
     "better-sqlite3": "^12.6.2",

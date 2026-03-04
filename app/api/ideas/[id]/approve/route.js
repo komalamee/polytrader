@@ -32,7 +32,17 @@ async function parseJsonSafe(req) {
   }
 }
 
+function formatTelemetryLine({ ok, upstreamStatus, durationMs, detail }) {
+  const ts = new Date().toISOString();
+  const base = `${ts} | approve | upstream=${upstreamStatus} | duration_ms=${durationMs}`;
+  if (ok) return `${base} | result=ok`;
+  return `${base} | result=error | detail=${String(detail || '').slice(0, 400)}`;
+}
+
 export async function POST(req, { params }) {
+  const startedAt = Date.now();
+  const requestId = `approve_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+
   try {
     const idea = getIdeaById(params.id);
     if (!idea) {
@@ -45,7 +55,10 @@ export async function POST(req, { params }) {
     const user = process.env.BATTLESTATION_BASIC_USER || process.env.MISSION_CONTROL_USER || '';
     const pass = process.env.BATTLESTATION_BASIC_PASS || process.env.MISSION_CONTROL_PASSWORD || '';
 
-    const headers = { 'Content-Type': 'application/json' };
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-Ideas-Request-Id': requestId
+    };
     if (user && pass) {
       headers.Authorization = `Basic ${encodeBasicAuth(user, pass)}`;
     }
@@ -57,31 +70,70 @@ export async function POST(req, { params }) {
     });
 
     const payload = await response.json().catch(() => ({}));
+    const durationMs = Date.now() - startedAt;
+
     if (!response.ok) {
       return NextResponse.json(
         {
           error: 'failed_to_push_battlestation',
-          detail: payload?.error || `HTTP ${response.status}`
+          detail: payload?.error || `HTTP ${response.status}`,
+          telemetry: {
+            requestId,
+            upstreamStatus: response.status,
+            durationMs,
+            logLine: formatTelemetryLine({
+              ok: false,
+              upstreamStatus: response.status,
+              durationMs,
+              detail: payload?.error || `HTTP ${response.status}`
+            })
+          }
         },
         { status: 502 }
       );
     }
 
     const proposalId = payload?.proposal?.id || payload?.proposalId || payload?.id || null;
+    const existingNotes = String(idea.feedback_notes || '').trim();
+    const inboundNotes = String(payloadIn?.feedback_notes || payloadIn?.feedback_note || '').trim();
+    const telemetryLine = formatTelemetryLine({ ok: true, upstreamStatus: response.status, durationMs });
+    const mergedNotes = [existingNotes, inboundNotes, telemetryLine].filter(Boolean).join('\n');
+
     const updated = updateIdeaById(params.id, {
       status: 'building',
       battlestation_id: proposalId,
-      feedback_notes: payloadIn?.feedback_notes || payloadIn?.feedback_note
+      feedback_notes: mergedNotes
     });
 
     return NextResponse.json({
       ok: true,
       idea: updated,
-      battlestation: payload
+      battlestation: payload,
+      telemetry: {
+        requestId,
+        upstreamStatus: response.status,
+        durationMs,
+        proposalId
+      }
     });
   } catch (error) {
+    const durationMs = Date.now() - startedAt;
     return NextResponse.json(
-      { error: 'approve_failed', detail: String(error.message || error) },
+      {
+        error: 'approve_failed',
+        detail: String(error.message || error),
+        telemetry: {
+          requestId,
+          upstreamStatus: 'exception',
+          durationMs,
+          logLine: formatTelemetryLine({
+            ok: false,
+            upstreamStatus: 'exception',
+            durationMs,
+            detail: String(error.message || error)
+          })
+        }
+      },
       { status: 500 }
     );
   }
