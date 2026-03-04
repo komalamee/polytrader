@@ -41,6 +41,7 @@ export default async function IdeaDetailPage({ params }) {
           <div className={styles.kv}><strong>Updated</strong>{formatDate(idea.updated_at)}</div>
           <div className={styles.kv}><strong>Battlestation ID</strong>{idea.battlestation_id || '--'}</div>
           <div className={styles.kv}><strong>Source URL</strong>{idea.source_url ? <a className={styles.link} href={idea.source_url} target="_blank" rel="noopener noreferrer">{idea.source_url}</a> : '--'}</div>
+          <div className={styles.kv}><strong>Feedback Notes</strong>{idea.feedback_notes || '--'}</div>
         </div>
 
         <div className={styles.report}>

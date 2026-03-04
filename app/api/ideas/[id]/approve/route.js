@@ -24,12 +24,22 @@ function buildBattlestationPayload(idea) {
   };
 }
 
-export async function POST(_req, { params }) {
+async function parseJsonSafe(req) {
+  try {
+    return await req.json();
+  } catch {
+    return {};
+  }
+}
+
+export async function POST(req, { params }) {
   try {
     const idea = getIdeaById(params.id);
     if (!idea) {
       return NextResponse.json({ error: 'idea_not_found' }, { status: 404 });
     }
+
+    const payloadIn = await parseJsonSafe(req);
 
     const apiBase = process.env.BATTLESTATION_API_BASE || 'http://127.0.0.1:3333';
     const user = process.env.BATTLESTATION_BASIC_USER || process.env.MISSION_CONTROL_USER || '';
@@ -60,7 +70,8 @@ export async function POST(_req, { params }) {
     const proposalId = payload?.proposal?.id || payload?.proposalId || payload?.id || null;
     const updated = updateIdeaById(params.id, {
       status: 'building',
-      battlestation_id: proposalId
+      battlestation_id: proposalId,
+      feedback_notes: payloadIn?.feedback_notes || payloadIn?.feedback_note
     });
 
     return NextResponse.json({

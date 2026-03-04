@@ -153,6 +153,33 @@
   flex-wrap: wrap;
 }
 
+.feedbackRow {
+  margin-top: 0.65rem;
+  display: flex;
+  gap: 0.55rem;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.feedbackInput {
+  flex: 1 1 360px;
+  min-height: 60px;
+  background: #101114;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  color: var(--text);
+  font-size: 0.82rem;
+  line-height: 1.4;
+  padding: 0.55rem 0.62rem;
+  resize: vertical;
+}
+
+.feedbackInput:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
 .btn,
 .select {
   border: 1px solid var(--line);
@@ -224,7 +251,7 @@
 .statusInterested { color: #9be6a8; }
 .statusSaved { color: #d0c0ff; }
 .statusBuilding { color: #ffcb60; }
-.statusRejected { color: #ff8e8e; }
+.statusArchived { color: #ff8e8e; }
 
 .loader {
   color: var(--muted);
@@ -293,5 +320,9 @@
 
   .detailGrid {
     grid-template-columns: 1fr;
+  }
+
+  .feedbackInput {
+    flex-basis: 100%;
   }
 }

@@ -12,7 +12,7 @@ const TABS = [
   { key: 'interested', label: 'Interested', query: { status: 'interested', sort: 'updated_at' } },
   { key: 'saved', label: 'Saved', query: { status: 'saved', sort: 'updated_at' } },
   { key: 'building', label: 'Building', query: { status: 'building', sort: 'updated_at' } },
-  { key: 'rejected', label: 'Not Interested', query: { status: 'rejected', sort: 'updated_at' } }
+  { key: 'archived', label: 'Archive', query: { status: 'archived', sort: 'updated_at' } }
 ];
 
 function scoreClass(value, max) {
@@ -26,7 +26,7 @@ function statusClass(status) {
   if (status === 'interested') return styles.statusInterested;
   if (status === 'saved') return styles.statusSaved;
   if (status === 'building') return styles.statusBuilding;
-  if (status === 'rejected') return styles.statusRejected;
+  if (status === 'archived') return styles.statusArchived;
   return styles.statusNew;
 }
 
@@ -51,6 +51,7 @@ export default function IdeasDashboardClient() {
   const [error, setError] = useState('');
   const [expanded, setExpanded] = useState({});
   const [busyMap, setBusyMap] = useState({});
+  const [noteMap, setNoteMap] = useState({});
 
   const activeTab = useMemo(() => TABS.find((x) => x.key === tab) || TABS[0], [tab]);
 
@@ -66,7 +67,18 @@ export default function IdeasDashboardClient() {
       const res = await fetch(`/api/ideas?${params.toString()}`, { cache: 'no-store' });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.detail || data?.error || 'failed to load ideas');
-      setIdeas(Array.isArray(data.ideas) ? data.ideas : []);
+
+      const list = Array.isArray(data.ideas) ? data.ideas : [];
+      setIdeas(list);
+      setNoteMap((prev) => {
+        const next = { ...prev };
+        for (const idea of list) {
+          if (next[idea.id] === undefined) {
+            next[idea.id] = idea.feedback_notes || '';
+          }
+        }
+        return next;
+      });
     } catch (err) {
       setError(String(err.message || err));
       setIdeas([]);
@@ -90,7 +102,12 @@ export default function IdeasDashboardClient() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.detail || data?.error || 'update failed');
-      setIdeas((prev) => prev.map((idea) => (idea.id === id ? data.idea : idea)));
+
+      if (data?.idea) {
+        setNoteMap((prev) => ({ ...prev, [id]: data.idea.feedback_notes || '' }));
+      }
+
+      await loadIdeas();
     } catch (err) {
       setError(String(err.message || err));
     } finally {
@@ -101,10 +118,22 @@ export default function IdeasDashboardClient() {
   async function approveIdea(id) {
     setBusyMap((prev) => ({ ...prev, [id]: true }));
     try {
-      const res = await fetch(`/api/ideas/${id}/approve`, { method: 'POST' });
+      const feedback = (noteMap[id] || '').trim();
+      const payload = feedback ? { feedback_notes: feedback } : undefined;
+
+      const res = await fetch(`/api/ideas/${id}/approve`, {
+        method: 'POST',
+        headers: payload ? { 'Content-Type': 'application/json' } : undefined,
+        body: payload ? JSON.stringify(payload) : undefined
+      });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.detail || data?.error || 'approve failed');
-      setIdeas((prev) => prev.map((idea) => (idea.id === id ? data.idea : idea)));
+
+      if (data?.idea) {
+        setNoteMap((prev) => ({ ...prev, [id]: data.idea.feedback_notes || '' }));
+      }
+
+      await loadIdeas();
     } catch (err) {
       setError(String(err.message || err));
     } finally {
@@ -116,6 +145,21 @@ export default function IdeasDashboardClient() {
     setExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
   }
 
+  function setIdeaNote(id, value) {
+    setNoteMap((prev) => ({ ...prev, [id]: value }));
+  }
+
+  function saveFeedback(id) {
+    patchIdea(id, { feedback_notes: noteMap[id] || '' });
+  }
+
+  function disapproveIdea(id) {
+    patchIdea(id, {
+      status: 'archived',
+      feedback_notes: noteMap[id] || ''
+    });
+  }
+
   function runDropdownAction(id, value) {
     if (!value) return;
     if (value === 'chat') {
@@ -123,7 +167,7 @@ export default function IdeasDashboardClient() {
       return;
     }
     if (value === 'archive') {
-      patchIdea(id, { status: 'rejected' });
+      disapproveIdea(id);
       return;
     }
     if (value === 'assign-researcher') {
@@ -137,14 +181,14 @@ export default function IdeasDashboardClient() {
         <div>
           <h1 className={styles.title}>Ideas Dashboard</h1>
           <p className={styles.subtitle}>
-            Sparky&apos;s scored opportunities from X, Reddit, and web scans. Review, react, and push promising ideas to Battlestation.
+            Sparky&apos;s scored opportunities from X, Reddit, and web scans. Review, approve, archive, and keep feedback notes for better future sourcing.
           </p>
         </div>
         <input
           className={styles.search}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search title + description"
+          placeholder="Search title + description + feedback"
           aria-label="Search ideas"
         />
       </div>
@@ -175,6 +219,7 @@ export default function IdeasDashboardClient() {
           const painSignals = Array.isArray(idea.pain_signals) ? idea.pain_signals : [];
           const isExpanded = Boolean(expanded[idea.id]);
           const busy = Boolean(busyMap[idea.id]);
+          const note = noteMap[idea.id] ?? idea.feedback_notes ?? '';
 
           return (
             <article key={idea.id} className={styles.card}>
@@ -212,7 +257,7 @@ export default function IdeasDashboardClient() {
                     {isExpanded ? 'Hide Report' : 'View Report'}
                   </button>
                   <button className={styles.btn} disabled={busy} onClick={() => approveIdea(idea.id)}>
-                    {busy ? 'Pushing...' : 'Push to Battlestation'}
+                    {busy ? 'Pushing...' : 'Approve → Battlestation'}
                   </button>
 
                   <select
@@ -225,7 +270,7 @@ export default function IdeasDashboardClient() {
                   >
                     <option value="">More</option>
                     <option value="chat">Chat with Sparky</option>
-                    <option value="archive">Archive</option>
+                    <option value="archive">Disapprove + Archive</option>
                     <option value="assign-researcher">Assign to Researcher</option>
                   </select>
                 </div>
@@ -241,11 +286,11 @@ export default function IdeasDashboardClient() {
                   </button>
                   <button
                     className={`${styles.btn} ${styles.reaction}`}
-                    data-active={idea.status === 'rejected'}
+                    data-active={idea.status === 'archived'}
                     disabled={busy}
-                    onClick={() => patchIdea(idea.id, { status: 'rejected' })}
+                    onClick={() => disapproveIdea(idea.id)}
                   >
-                    👎 Not Interested
+                    👎 Disapprove
                   </button>
                   <button
                     className={`${styles.btn} ${styles.reaction}`}
@@ -264,6 +309,20 @@ export default function IdeasDashboardClient() {
                     🚀 Building
                   </button>
                 </div>
+              </div>
+
+              <div className={styles.feedbackRow}>
+                <textarea
+                  className={styles.feedbackInput}
+                  rows={2}
+                  placeholder="Feedback notes (why approved/disapproved). Used to improve future idea sourcing."
+                  value={note}
+                  disabled={busy}
+                  onChange={(e) => setIdeaNote(idea.id, e.target.value)}
+                />
+                <button className={`${styles.btn} ${styles.btnGhost}`} disabled={busy} onClick={() => saveFeedback(idea.id)}>
+                  Save Note
+                </button>
               </div>
 
               {isExpanded ? (
@@ -290,6 +349,9 @@ export default function IdeasDashboardClient() {
 
                   <p className={styles.reportTitle}>Edge Analysis</p>
                   <p className={styles.description}>{idea.edge_reason || 'No edge reason yet.'}</p>
+
+                  <p className={styles.reportTitle}>Feedback Notes</p>
+                  <p className={styles.description}>{note || 'No feedback notes yet.'}</p>
 
                   <p className={styles.reportTitle}>Cycle Focus</p>
                   <p className={styles.description}>{idea.cycle_focus || 'n/a'}</p>
