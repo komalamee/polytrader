@@ -51,6 +51,32 @@ export async function POST(req, { params }) {
 
     const payloadIn = await parseJsonSafe(req);
 
+    // If already submitted to Battlestation (via Assign to Researcher), skip re-submission
+    if (idea.battlestation_id) {
+      const existingNotes = String(idea.feedback_notes || '').trim();
+      const inboundNotes = String(payloadIn?.feedback_notes || payloadIn?.feedback_note || '').trim();
+      const durationMs = Date.now() - startedAt;
+      const telemetryLine = formatTelemetryLine({ ok: true, upstreamStatus: 'skipped_existing', durationMs });
+      const mergedNotes = [existingNotes, inboundNotes, telemetryLine].filter(Boolean).join('\n');
+
+      const updated = updateIdeaById(params.id, {
+        status: 'building',
+        feedback_notes: mergedNotes
+      });
+
+      return NextResponse.json({
+        ok: true,
+        idea: updated,
+        battlestation: { ok: true, skipped: true, existing_id: idea.battlestation_id },
+        telemetry: {
+          requestId,
+          upstreamStatus: 'skipped_existing',
+          durationMs,
+          proposalId: idea.battlestation_id
+        }
+      });
+    }
+
     const apiBase = process.env.BATTLESTATION_API_BASE || 'http://127.0.0.1:3333';
     const user = process.env.BATTLESTATION_BASIC_USER || process.env.MISSION_CONTROL_USER || '';
     const pass = process.env.BATTLESTATION_BASIC_PASS || process.env.MISSION_CONTROL_PASSWORD || '';

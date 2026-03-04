@@ -72,6 +72,8 @@ export default function IdeasDashboardClient() {
   const [expanded, setExpanded] = useState({});
   const [busyMap, setBusyMap] = useState({});
   const [noteMap, setNoteMap] = useState({});
+  const [reportMap, setReportMap] = useState({});
+  const [reportLoadingMap, setReportLoadingMap] = useState({});
 
   const activeTab = useMemo(() => TABS.find((x) => x.key === tab) || TABS[0], [tab]);
   const totalPages = Math.max(1, Math.ceil((total || 0) / PAGE_SIZE));
@@ -181,8 +183,62 @@ export default function IdeasDashboardClient() {
     }
   }
 
+  async function assignToResearcher(id) {
+    setBusyMap((prev) => ({ ...prev, [id]: true }));
+    setInfo('');
+    setError('');
+
+    try {
+      const res = await fetch(`/api/ideas/${id}/research`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.detail || data?.error || 'failed to queue research');
+      }
+
+      if (data?.alreadyQueued) {
+        setInfo(`Research already queued for this idea (${data.battlestation_id}). Check "View Report".`);
+      } else {
+        setInfo(`Research queued! Battlestation ID: ${data.battlestation_id}. Report will be ready in a few minutes.`);
+      }
+
+      if (data?.idea) {
+        setNoteMap((prev) => ({ ...prev, [id]: data.idea.feedback_notes || '' }));
+      }
+
+      await loadIdeas();
+    } catch (err) {
+      setError(String(err.message || err));
+    } finally {
+      setBusyMap((prev) => ({ ...prev, [id]: false }));
+    }
+  }
+
+  async function fetchReport(id) {
+    setReportLoadingMap((prev) => ({ ...prev, [id]: true }));
+    try {
+      const res = await fetch(`/api/ideas/${id}/report`, { cache: 'no-store' });
+      const data = await res.json();
+      if (!res.ok) {
+        setReportMap((prev) => ({ ...prev, [id]: { status: 'error', message: data?.detail || data?.error || 'Failed to load report' } }));
+        return;
+      }
+      setReportMap((prev) => ({ ...prev, [id]: data }));
+    } catch (err) {
+      setReportMap((prev) => ({ ...prev, [id]: { status: 'error', message: String(err.message || err) } }));
+    } finally {
+      setReportLoadingMap((prev) => ({ ...prev, [id]: false }));
+    }
+  }
+
   function toggleExpand(id) {
-    setExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
+    const next = !expanded[id];
+    setExpanded((prev) => ({ ...prev, [id]: next }));
+    if (next && !reportMap[id]) {
+      fetchReport(id);
+    }
   }
 
   function setIdeaNote(id, value) {
@@ -211,7 +267,7 @@ export default function IdeasDashboardClient() {
       return;
     }
     if (value === 'assign-researcher') {
-      patchIdea(id, { status: 'interested' });
+      assignToResearcher(id);
     }
   }
 
@@ -225,13 +281,103 @@ export default function IdeasDashboardClient() {
     setPage(1);
   }
 
+  function renderReport(id, idea) {
+    const reportLoading = reportLoadingMap[id];
+    const reportData = reportMap[id];
+
+    if (reportLoading) {
+      return <p className={styles.description}>Loading report...</p>;
+    }
+
+    if (!reportData) {
+      return (
+        <div>
+          <p className={styles.reportTitle}>Report</p>
+          <p className={styles.description}>Click &quot;View Report&quot; to load research data.</p>
+        </div>
+      );
+    }
+
+    if (reportData.status === 'no_research') {
+      const painSignals = Array.isArray(idea.pain_signals) ? idea.pain_signals : [];
+      return (
+        <div>
+          <p className={styles.reportTitle}>No Research Yet</p>
+          <p className={styles.description}>{reportData.message}</p>
+
+          {idea.source_url ? (
+            <>
+              <p className={styles.reportTitle}>Source</p>
+              <a href={idea.source_url} target="_blank" rel="noopener noreferrer" className={styles.link}>
+                {idea.source_url}
+              </a>
+            </>
+          ) : null}
+
+          {painSignals.length ? (
+            <>
+              <p className={styles.reportTitle}>Pain Signals</p>
+              <ul>{painSignals.map((s, i) => <li key={i}>{s}</li>)}</ul>
+            </>
+          ) : null}
+
+          {idea.edge_reason ? (
+            <>
+              <p className={styles.reportTitle}>Edge Analysis</p>
+              <p className={styles.description}>{idea.edge_reason}</p>
+            </>
+          ) : null}
+        </div>
+      );
+    }
+
+    if (reportData.status === 'pending') {
+      return (
+        <div>
+          <p className={styles.reportTitle}>Research In Progress</p>
+          <p className={styles.description}>{reportData.message}</p>
+          <p className={styles.description}>Battlestation ID: <code>{reportData.battlestation_id}</code></p>
+        </div>
+      );
+    }
+
+    if (reportData.status === 'error') {
+      return (
+        <div>
+          <p className={styles.reportTitle}>Report Error</p>
+          <p className={styles.description}>{reportData.message}</p>
+        </div>
+      );
+    }
+
+    if (reportData.status === 'ready') {
+      const sc = reportData.scorecard;
+      return (
+        <div>
+          {sc ? (
+            <div className={styles.scorecardRow}>
+              <span>Score: <strong>{sc.score ?? '—'}/100</strong></span>
+              <span>Confidence: <strong>{sc.confidence ? `${Math.round(sc.confidence * 100)}%` : '—'}</strong></span>
+              <span className={styles.recommendation}>{sc.recommendation ?? ''}</span>
+            </div>
+          ) : null}
+          <p className={styles.reportTitle}>Full Research Report</p>
+          <pre className={styles.reportContent}>{reportData.report}</pre>
+          <Link href={`/ideas/${id}`} className={styles.link}>Open full detail →</Link>
+        </div>
+      );
+    }
+
+    return null;
+  }
+
   return (
     <main className={styles.page}>
       <div className={styles.header}>
         <div>
           <h1 className={styles.title}>Ideas Dashboard</h1>
           <p className={styles.subtitle}>
-            Sparky&apos;s scored opportunities from X, Reddit, and web scans. Review, approve, archive, and keep feedback notes for better future sourcing.
+            Sparky&apos;s scored opportunities from X, Reddit, and web scans. Assign to Researcher for full market analysis, then approve or pass.
           </p>
         </div>
         <input
@@ -281,10 +427,10 @@ export default function IdeasDashboardClient() {
 
       <div className={styles.list}>
         {ideas.map((idea) => {
-          const painSignals = Array.isArray(idea.pain_signals) ? idea.pain_signals : [];
           const isExpanded = Boolean(expanded[idea.id]);
           const busy = Boolean(busyMap[idea.id]);
           const note = noteMap[idea.id] ?? idea.feedback_notes ?? '';
+          const hasResearch = Boolean(idea.battlestation_id);
 
           return (
             <article key={idea.id} className={styles.card}>
@@ -295,6 +441,7 @@ export default function IdeasDashboardClient() {
                     <span className={`${styles.badge} ${sourceBadgeClass(idea.source)}`}>{idea.source || 'web'}</span>
                     <span>{formatDate(idea.source_date || idea.created_at)}</span>
                     <span className={`${styles.statusPill} ${statusClass(idea.status)}`}>{idea.status || 'new'}</span>
+                    {hasResearch ? <span className={styles.researchBadge}>Research queued</span> : null}
                   </div>
                 </div>
 
@@ -322,7 +469,7 @@ export default function IdeasDashboardClient() {
                     {isExpanded ? 'Hide Report' : 'View Report'}
                   </button>
                   <button className={styles.btn} disabled={busy} onClick={() => approveIdea(idea.id)}>
-                    {busy ? 'Pushing...' : 'Approve → Battlestation'}
+                    {busy && busyMap[idea.id] ? 'Pushing...' : 'Approve → Battlestation'}
                   </button>
 
                   <select
@@ -336,7 +483,9 @@ export default function IdeasDashboardClient() {
                     <option value="">More</option>
                     <option value="chat">Chat with Sparky</option>
                     <option value="archive">Disapprove + Archive</option>
-                    <option value="assign-researcher">Assign to Researcher</option>
+                    <option value="assign-researcher">
+                      {hasResearch ? 'Research already queued' : 'Assign to Researcher'}
+                    </option>
                   </select>
                 </div>
 
@@ -365,14 +514,6 @@ export default function IdeasDashboardClient() {
                   >
                     🔖 Save
                   </button>
-                  <button
-                    className={`${styles.btn} ${styles.reaction}`}
-                    data-active={idea.status === 'building'}
-                    disabled={busy}
-                    onClick={() => patchIdea(idea.id, { status: 'building' })}
-                  >
-                    🚀 Building
-                  </button>
                 </div>
               </div>
 
@@ -392,36 +533,7 @@ export default function IdeasDashboardClient() {
 
               {isExpanded ? (
                 <div className={styles.report}>
-                  <p className={styles.reportTitle}>Source</p>
-                  {idea.source_url ? (
-                    <a href={idea.source_url} target="_blank" rel="noopener noreferrer" className={styles.link}>
-                      {idea.source_url}
-                    </a>
-                  ) : (
-                    <p className={styles.description}>No source URL attached.</p>
-                  )}
-
-                  <p className={styles.reportTitle}>Pain Signals</p>
-                  {painSignals.length ? (
-                    <ul>
-                      {painSignals.map((signal, idx) => (
-                        <li key={`${idea.id}-signal-${idx}`}>{signal}</li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <p className={styles.description}>No pain signals captured.</p>
-                  )}
-
-                  <p className={styles.reportTitle}>Edge Analysis</p>
-                  <p className={styles.description}>{idea.edge_reason || 'No edge reason yet.'}</p>
-
-                  <p className={styles.reportTitle}>Feedback Notes</p>
-                  <p className={styles.description}>{note || 'No feedback notes yet.'}</p>
-
-                  <p className={styles.reportTitle}>Cycle Focus</p>
-                  <p className={styles.description}>{idea.cycle_focus || 'n/a'}</p>
-
-                  <Link href={`/ideas/${idea.id}`} className={styles.link}>Open full detail →</Link>
+                  {renderReport(idea.id, idea)}
                 </div>
               ) : null}
             </article>

@@ -371,3 +371,48 @@
     flex-basis: 100%;
   }
 }
+
+.researchBadge {
+  border: 1px solid #264f6a;
+  border-radius: 999px;
+  padding: 0.15rem 0.5rem;
+  font-size: 0.7rem;
+  color: #7cc5ff;
+  background: rgba(30, 80, 120, 0.15);
+}
+
+.reportContent {
+  margin: 0;
+  padding: 0.85rem;
+  background: #0c0c0f;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font-size: 0.8rem;
+  line-height: 1.55;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: auto;
+  max-height: 600px;
+  overflow-y: auto;
+}
+
+.scorecardRow {
+  display: flex;
+  gap: 0.9rem;
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 0.83rem;
+  margin-bottom: 0.5rem;
+  color: var(--muted);
+}
+
+.recommendation {
+  background: rgba(60, 110, 200, 0.15);
+  border: 1px solid rgba(100, 150, 255, 0.25);
+  border-radius: 9px;
+  padding: 0.18rem 0.55rem;
+  font-size: 0.75rem;
+  color: #8ab5ff;
+  text-transform: lowercase;
+}
