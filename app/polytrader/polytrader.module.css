@@ -1,0 +1,157 @@
+.wrap {
+  min-height: 100vh;
+  padding: 1.25rem;
+  background: #070b08;
+  color: #d8ffe7;
+  font-family: 'JetBrains Mono', 'SF Mono', Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+  border: 1px solid #144127;
+  background: linear-gradient(180deg, #081109 0%, #050906 100%);
+  padding: 1rem;
+  box-shadow: 0 0 0 1px #0b2a16 inset, 0 0 18px rgba(0, 255, 148, 0.15);
+}
+
+.kicker {
+  margin: 0;
+  color: #62cc8f;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.header h1 {
+  margin: 0.4rem 0;
+  text-transform: lowercase;
+}
+
+.subtitle {
+  margin: 0;
+  color: #a3d6b8;
+}
+
+.modeSwitch {
+  display: inline-flex;
+  border: 1px solid #225637;
+}
+
+.modeSwitch button {
+  border: none;
+  border-right: 1px solid #225637;
+  background: #081109;
+  color: #b8ffd4;
+  padding: 0.55rem 0.8rem;
+  cursor: pointer;
+  text-transform: lowercase;
+}
+
+.modeSwitch button:last-child {
+  border-right: none;
+}
+
+.active {
+  background: #0f3a23 !important;
+  color: #dcffea !important;
+}
+
+.activeLive {
+  background: #3d150f !important;
+  color: #ffd7d1 !important;
+}
+
+.stats {
+  margin-top: 1rem;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+.stats article {
+  border: 1px solid #1c5131;
+  background: #09110b;
+  padding: 0.8rem;
+}
+
+.stats span {
+  display: block;
+  color: #87c6a2;
+  font-size: 0.8rem;
+  margin-bottom: 0.35rem;
+}
+
+.stats strong {
+  font-size: 1.15rem;
+}
+
+.grid {
+  margin-top: 1rem;
+  display: grid;
+  grid-template-columns: 1fr 1.3fr 1fr;
+  gap: 0.8rem;
+}
+
+.card {
+  border: 1px solid #1b4f30;
+  background: #071008;
+  padding: 0.9rem;
+}
+
+.card h2 {
+  margin-top: 0;
+  font-size: 0.95rem;
+  text-transform: lowercase;
+  color: #9df0bd;
+}
+
+.card ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.65rem;
+}
+
+.card li {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.8rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px dashed #1e442c;
+  font-size: 0.85rem;
+}
+
+.card li:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.card small {
+  display: block;
+  color: #75a589;
+  margin-top: 0.2rem;
+}
+
+.meta {
+  margin-top: 0.8rem;
+  color: #76ab8b;
+  font-size: 0.75rem;
+}
+
+@media (max-width: 1000px) {
+  .stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .grid {
+    grid-template-columns: 1fr;
+  }
+
+  .header {
+    flex-direction: column;
+  }
+}
