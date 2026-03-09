@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import fs from "node:fs/promises";
+import path from "node:path";
 
 export const dynamic = "force-dynamic";
 
@@ -36,6 +38,7 @@ const PAPER_MARKETS = [
   "Fed cuts rates before June?",
   "US recession before Q4 2026?"
 ];
+const LIVE_STATE_FILENAME = "polytrader-live-state.json";
 
 function normalizeAddress(value) {
   const raw = String(value || "").trim().toLowerCase();
@@ -70,6 +73,67 @@ function withParams(base, params = {}) {
     url.searchParams.set(key, String(value));
   }
   return url.toString();
+}
+
+function resolvePolytraderDataDir() {
+  const configured = String(
+    process.env.POLYTRADER_DATA_DIR
+    || process.env.IDEAS_DATA_DIR
+    || path.join(process.cwd(), ".data")
+  ).trim();
+  return configured || path.join(process.cwd(), ".data");
+}
+
+function resolveLiveStatePath() {
+  const configured = String(process.env.POLYTRADER_STATE_PATH || "").trim();
+  if (configured) return configured;
+  return path.join(resolvePolytraderDataDir(), LIVE_STATE_FILENAME);
+}
+
+function normalizeWorkerEvent(entry = {}) {
+  const timestamp = toNumber(entry?.timestamp, 0);
+  const isoTime = entry?.isoTime || (timestamp ? new Date(timestamp * 1000).toISOString() : null);
+  return {
+    timestamp,
+    isoTime,
+    type: String(entry?.type || "TRADE"),
+    side: String(entry?.side || "").toUpperCase(),
+    title: String(entry?.title || "Unknown market"),
+    outcome: String(entry?.outcome || ""),
+    price: toNumber(entry?.price, NaN),
+    sizeUsd: toNumber(entry?.sizeUsd, 0),
+    pnlUsd: Number.isFinite(toNumber(entry?.pnlUsd, NaN)) ? toNumber(entry?.pnlUsd, 0) : null,
+    txHash: String(entry?.txHash || entry?.orderId || "")
+  };
+}
+
+async function readLiveEngineState() {
+  try {
+    const raw = await fs.readFile(resolveLiveStatePath(), "utf8");
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function mergeExecutionLogs({ activityLog = [], workerLog = [] }) {
+  const rows = [...workerLog, ...activityLog];
+  const deduped = new Map();
+  for (const row of rows) {
+    const key = [
+      String(row?.txHash || ""),
+      String(row?.timestamp || 0),
+      String(row?.title || ""),
+      String(row?.outcome || ""),
+      String(row?.side || "")
+    ].join("|");
+    if (!deduped.has(key)) deduped.set(key, row);
+  }
+  return [...deduped.values()]
+    .sort((a, b) => toNumber(b.timestamp, 0) - toNumber(a.timestamp, 0))
+    .slice(0, 80);
 }
 
 async function fetchJson(url, init = {}) {
@@ -594,12 +658,36 @@ async function buildLiveSnapshot({ profileAddress, walletAddress, risk }) {
   const winRate = totalClosed > 0 ? totalWins / totalClosed : null;
 
   const signals = buildSignals(markets);
-  const executionLog = buildExecutionLog(activity);
-  const equity = buildEquitySeries({
+  const activityExecutionLog = buildExecutionLog(activity);
+  const activityEquity = buildEquitySeries({
     walletEquityUsd: walletBalanceUsd,
     closedPositions,
     activity
   });
+  const liveWorkerState = await readLiveEngineState();
+  const workerEvents = Array.isArray(liveWorkerState?.events)
+    ? liveWorkerState.events.map((row) => normalizeWorkerEvent(row))
+    : [];
+  const executionLog = mergeExecutionLogs({
+    activityLog: activityExecutionLog,
+    workerLog: workerEvents
+  });
+
+  const workerEquity = Array.isArray(liveWorkerState?.equityCurve)
+    ? liveWorkerState.equityCurve
+      .map((point) => ({
+        timestamp: toNumber(point?.timestamp, NaN),
+        value: toNumber(point?.value, NaN)
+      }))
+      .filter((point) => Number.isFinite(point.timestamp) && Number.isFinite(point.value))
+      .sort((a, b) => a.timestamp - b.timestamp)
+    : [];
+  const equity = workerEquity.length > 1 ? workerEquity : activityEquity;
+
+  const workerOpenPositions = Array.isArray(liveWorkerState?.positions)
+    ? liveWorkerState.positions.filter((row) => String(row?.status || "open").toLowerCase() === "open").length
+    : 0;
+  const workerTrades = Array.isArray(liveWorkerState?.events) ? liveWorkerState.events.length : 0;
   const paperBacktest = buildPaperBacktest({
     startEquityUsd: PAPER_STARTING_EQUITY_USD,
     days: PAPER_BACKTEST_DAYS,
@@ -616,8 +704,11 @@ async function buildLiveSnapshot({ profileAddress, walletAddress, risk }) {
   });
 
   const warnings = [];
-  if (positions.length === 0 && activity.length === 0) {
+  if (positions.length === 0 && activity.length === 0 && workerEvents.length === 0) {
     warnings.push("No Polymarket positions/trades found for profile address.");
+  }
+  if (typeof liveWorkerState?.lastStatus === "string" && liveWorkerState.lastStatus) {
+    warnings.push(`Execution worker: ${liveWorkerState.lastStatus}`);
   }
 
   return {
@@ -630,9 +721,9 @@ async function buildLiveSnapshot({ profileAddress, walletAddress, risk }) {
       walletBalanceUsd,
       pnlTodayUsd,
       pnlTodayPct,
-      totalTrades: activity.length,
+      totalTrades: Math.max(activity.length, workerTrades),
       activeRiskUsd,
-      openPositions: positions.length,
+      openPositions: Math.max(positions.length, workerOpenPositions),
       winRate,
       stableBalanceUsd,
       polymarketValueUsd,
@@ -664,7 +755,9 @@ async function buildLiveSnapshot({ profileAddress, walletAddress, risk }) {
         positions: positions.length,
         closedPositions: closedPositions.length,
         activity: activity.length,
-        signals: signals.length
+        signals: signals.length,
+        workerEvents: workerEvents.length,
+        workerOpenPositions
       },
       latencyMs: fetchMs
     }
@@ -683,7 +776,7 @@ function readRiskLocks() {
   };
 }
 
-function readExecutionState({ mode, profileAddress, walletAddress }) {
+function readExecutionState({ mode, profileAddress, walletAddress, liveWorkerState }) {
   const accountLabel = String(process.env.POLYTRADER_ACCOUNT_LABEL || "polytrader").trim() || "polytrader";
   const executionEngineAvailable = String(process.env.POLYTRADER_EXECUTION_ENGINE_ENABLED || "").trim().toLowerCase() === "true";
   const armedLive = String(process.env.POLYTRADER_ARM_LIVE || "").trim().toLowerCase() === "true";
@@ -692,9 +785,22 @@ function readExecutionState({ mode, profileAddress, walletAddress }) {
     && String(process.env.POLYMARKET_API_SECRET || "").trim()
     && String(process.env.POLYMARKET_API_PASSPHRASE || "").trim()
   );
-  const hasSigner = Boolean(normalizeAddress(walletAddress));
+  const hasPrivateKey = Boolean(String(process.env.POLYTRADER_PRIVATE_KEY || "").trim());
+  const hasWalletAddress = Boolean(normalizeAddress(walletAddress));
+  const lastCycleAtIso = typeof liveWorkerState?.lastCycleAt === "string" ? liveWorkerState.lastCycleAt : null;
+  const lastCycleAtMs = lastCycleAtIso ? Date.parse(lastCycleAtIso) : NaN;
+  const workerLastStatus = typeof liveWorkerState?.lastStatus === "string" ? liveWorkerState.lastStatus : "";
+  const workerRegionBlocked = /trading restricted in your region|geoblock/i.test(workerLastStatus);
+  const cycleSeconds = Math.max(15, toNumber(process.env.POLYTRADER_CYCLE_SECONDS, 45));
+  const workerOnline = Number.isFinite(lastCycleAtMs) && (Date.now() - lastCycleAtMs) <= cycleSeconds * 3000;
 
-  const canSubmitLiveOrders = mode === "live" && executionEngineAvailable && armedLive && hasApiCreds && hasSigner;
+  const canSubmitLiveOrders = mode === "live"
+    && executionEngineAvailable
+    && armedLive
+    && hasPrivateKey
+    && hasWalletAddress
+    && workerOnline
+    && !workerRegionBlocked;
   const status = canSubmitLiveOrders ? "armed_live" : (mode === "live" ? "monitor_only" : "paper");
 
   let reason = "Paper mode active.";
@@ -702,10 +808,14 @@ function readExecutionState({ mode, profileAddress, walletAddress }) {
     reason = "Live execution engine is not enabled yet. This build is monitoring + signal mode only.";
   } else if (mode === "live" && !armedLive) {
     reason = "Live order submission is not armed. Set POLYTRADER_ARM_LIVE=true to enable trading.";
-  } else if (mode === "live" && !hasApiCreds) {
-    reason = "Polymarket API credentials are missing (POLYMARKET_API_KEY/SECRET/PASSPHRASE).";
-  } else if (mode === "live" && !hasSigner) {
-    reason = "Wallet signer unavailable for live order submission.";
+  } else if (mode === "live" && !hasPrivateKey) {
+    reason = "Signer key is missing. Set POLYTRADER_PRIVATE_KEY for live execution.";
+  } else if (mode === "live" && !hasWalletAddress) {
+    reason = "Wallet address is invalid or missing.";
+  } else if (mode === "live" && !workerOnline) {
+    reason = "Execution worker is not running or stale.";
+  } else if (mode === "live" && workerRegionBlocked) {
+    reason = "Polymarket blocked order placement for this server region (geoblocked).";
   } else if (canSubmitLiveOrders) {
     reason = "Live order submission is armed.";
   }
@@ -717,7 +827,12 @@ function readExecutionState({ mode, profileAddress, walletAddress }) {
     executionEngineAvailable,
     armedLive,
     hasApiCreds,
-    hasSigner,
+    hasPrivateKey,
+    hasWalletAddress,
+    workerOnline,
+    workerLastCycleAt: lastCycleAtIso,
+    workerLastStatus,
+    workerRegionBlocked,
     canSubmitLiveOrders,
     status,
     reason
@@ -751,7 +866,8 @@ export async function GET(request) {
   const mode = String(url.searchParams.get("mode") || "paper").toLowerCase() === "live" ? "live" : "paper";
   const risk = readRiskLocks();
   const { profileAddress, walletAddress } = resolveAddresses(url.searchParams);
-  const execution = readExecutionState({ mode, profileAddress, walletAddress });
+  const liveWorkerState = mode === "live" ? await readLiveEngineState() : null;
+  const execution = readExecutionState({ mode, profileAddress, walletAddress, liveWorkerState });
 
   try {
     const baseSnapshot = mode === "live"
