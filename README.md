@@ -2,9 +2,15 @@
 
 Standalone PolyTrader app powering `hive.komalamin.com/polytrader`.
 
+## Core docs
+- Technical handoff: `docs/HANDOFF.md`
+- Plain-English explainer: `docs/EXPLAINER.md`
+- Agent coding playbook: `docs/AGENT_PLAYBOOK.md`
+- Env template: `.env.polytrader.example`
+
 ## What this repo contains
 - Next.js dashboard UI (`/polytrader`)
-- Live/paper API endpoint (`/api/polytrader`)
+- Live/paper snapshot API (`/api/polytrader`)
 - Polymarket execution worker (`scripts/polytrader-execution-worker.py`)
 
 ## Local dev
@@ -20,7 +26,7 @@ npm start
 ```
 
 ## Runtime env
-The app expects PolyTrader runtime env vars (wallet, risk locks, mode flags). On Kendra VPS these are loaded from:
+On Kendra VPS this is loaded from:
 - `/home/kendra/.openclaw/.env.polytrader`
 
 ## Safety defaults
@@ -29,5 +35,5 @@ The app expects PolyTrader runtime env vars (wallet, risk locks, mode flags). On
 - Kill switch at daily loss cap
 - Live execution requires explicit arming + signer key
 
-## Note on live trading
-Polymarket may reject order placement by region (geoblock). When this happens the app reports `monitor_only` with the blocker reason.
+## Live-trading note
+Polymarket may reject order placement by region (geoblock). When this happens the app reports `monitor_only` with blocker reason.
