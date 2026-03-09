@@ -26,6 +26,16 @@ const TOKENS = {
 };
 
 const FALLBACK_ADDRESS = "0xac259156e99e651224a42678b98fcfa12b02307f";
+const PAPER_STARTING_EQUITY_USD = 1000;
+const PAPER_BACKTEST_DAYS = 60;
+const PAPER_MARKETS = [
+  "OpenAI AGI claim in 2026?",
+  "Trump wins 2028 election?",
+  "US debt default by 2027?",
+  "BTC > $150k by Sep 2026?",
+  "Fed cuts rates before June?",
+  "US recession before Q4 2026?"
+];
 
 function normalizeAddress(value) {
   const raw = String(value || "").trim().toLowerCase();
@@ -213,6 +223,7 @@ function buildExecutionLog(activity = []) {
       const side = String(entry?.side || "").toUpperCase();
       const sizeUsd = toNumber(entry?.usdcSize, NaN);
       const fallbackSize = toNumber(entry?.size, 0) * toNumber(entry?.price, 0);
+      const pnlUsd = toNumber(entry?.pnlUsd, NaN);
 
       return {
         timestamp,
@@ -223,6 +234,7 @@ function buildExecutionLog(activity = []) {
         outcome: String(entry?.outcome || ""),
         price: toNumber(entry?.price, NaN),
         sizeUsd: Number.isFinite(sizeUsd) ? sizeUsd : fallbackSize,
+        pnlUsd: Number.isFinite(pnlUsd) ? pnlUsd : null,
         txHash: String(entry?.transactionHash || "")
       };
     });
@@ -360,20 +372,107 @@ function buildCalcPanels({ primarySignal, risk, apiTiming }) {
   ];
 }
 
-function buildPaperSnapshot({ profileAddress, walletAddress, risk }) {
-  const now = Date.now();
-  const points = [];
-  let value = 1000;
+function pseudoRandom(seed) {
+  const x = Math.sin(seed * 12.9898 + 78.233) * 43758.5453;
+  return x - Math.floor(x);
+}
 
-  for (let i = 0; i < 120; i += 1) {
-    const wave = Math.sin(i / 8) * 3.4;
-    const drift = 4.2 + (i % 11 === 0 ? -2.6 : 0.8);
-    value += drift + wave;
-    points.push({
-      timestamp: Math.floor((now - (119 - i) * 300000) / 1000),
-      value: Number(value.toFixed(4))
-    });
+function buildPaperBacktest({ startEquityUsd, days, risk }) {
+  const nowMs = Date.now();
+  const dayMs = 24 * 60 * 60 * 1000;
+  const startMs = nowMs - (days - 1) * dayMs;
+  const trades = [];
+  const equity = [{ timestamp: Math.floor(startMs / 1000), value: startEquityUsd }];
+  let equityUsd = startEquityUsd;
+  let wins = 0;
+  let losses = 0;
+
+  for (let day = 0; day < days; day += 1) {
+    let dayPnl = 0;
+    const tradesPerDay = 3 + (day % 2);
+
+    for (let slot = 0; slot < tradesPerDay; slot += 1) {
+      if (dayPnl <= -risk.maxDailyLossUsd) break;
+
+      const seed = day * 37 + slot * 19 + 11;
+      const market = PAPER_MARKETS[(day + slot) % PAPER_MARKETS.length];
+      const side = pseudoRandom(seed + 5) > 0.5 ? "BUY" : "SELL";
+      const outcome = side === "BUY" ? "YES" : "NO";
+      const sizeUsd = Number(
+        clamp(risk.maxTradeUsd * (0.72 + pseudoRandom(seed + 11) * 0.28), 1, risk.maxTradeUsd).toFixed(2)
+      );
+      const edge = (pseudoRandom(seed + 17) - 0.46) * 0.16;
+      let pnlUsd = Number((sizeUsd * edge).toFixed(2));
+      if (dayPnl + pnlUsd < -risk.maxDailyLossUsd) {
+        pnlUsd = Number((-risk.maxDailyLossUsd - dayPnl).toFixed(2));
+      }
+
+      dayPnl = Number((dayPnl + pnlUsd).toFixed(2));
+      equityUsd = Number((equityUsd + pnlUsd).toFixed(2));
+      if (pnlUsd >= 0) wins += 1;
+      else losses += 1;
+
+      const secondsOffset = 8 * 3600 + slot * 3 * 3600 + Math.floor(pseudoRandom(seed + 23) * 1800);
+      const timestamp = Math.floor((startMs + day * dayMs + secondsOffset * 1000) / 1000);
+      const price = clamp(0.34 + pseudoRandom(seed + 29) * 0.32, 0.05, 0.95);
+      const txHash = `paper-${day + 1}-${slot + 1}`;
+
+      trades.push({
+        timestamp,
+        isoTime: new Date(timestamp * 1000).toISOString(),
+        type: "TRADE",
+        side,
+        title: market,
+        outcome,
+        price: Number(price.toFixed(4)),
+        sizeUsd,
+        pnlUsd,
+        equityAfterUsd: equityUsd,
+        txHash
+      });
+
+      equity.push({
+        timestamp,
+        value: equityUsd
+      });
+    }
   }
+
+  const pnlUsd = Number((equityUsd - startEquityUsd).toFixed(2));
+  const totalTrades = trades.length;
+  const winRate = totalTrades > 0 ? wins / totalTrades : null;
+
+  return {
+    days,
+    startAtIso: new Date(startMs).toISOString(),
+    endAtIso: new Date(nowMs).toISOString(),
+    startEquityUsd,
+    endEquityUsd: equityUsd,
+    pnlUsd,
+    returnPct: startEquityUsd > 0 ? pnlUsd / startEquityUsd : null,
+    totalTrades,
+    wins,
+    losses,
+    winRate,
+    trades,
+    equity
+  };
+}
+
+function buildPaperSnapshot({ profileAddress, walletAddress, risk }) {
+  const backtest = buildPaperBacktest({
+    startEquityUsd: PAPER_STARTING_EQUITY_USD,
+    days: PAPER_BACKTEST_DAYS,
+    risk
+  });
+  const now = new Date();
+  const startOfDayUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()) / 1000;
+  const pnlTodayUsd = backtest.trades.reduce((sum, trade) => {
+    if (trade.timestamp < startOfDayUtc) return sum;
+    return sum + toNumber(trade.pnlUsd, 0);
+  }, 0);
+  const equityStart = backtest.endEquityUsd - pnlTodayUsd;
+  const pnlTodayPct = equityStart > 0 ? pnlTodayUsd / equityStart : null;
 
   const signals = [
     { id: "p1", market: "OpenAI AGI claim in 2026?", side: "YES", edge: 0.043, confidence: 0.86, marketPrice: 0.462, fairPrice: 0.505, volume24hr: 532000, liquidity: 1100000 },
@@ -382,21 +481,30 @@ function buildPaperSnapshot({ profileAddress, walletAddress, risk }) {
     { id: "p4", market: "BTC > $150k by Sep 2026?", side: "NO", edge: -0.016, confidence: 0.59, marketPrice: 0.518, fairPrice: 0.502, volume24hr: 1480000, liquidity: 2640000 }
   ];
 
-  const executionLog = [
-    { timestamp: Math.floor(now / 1000) - 81, isoTime: new Date(now - 81000).toISOString(), type: "TRADE", side: "BUY", title: "BTC > $150k by Sep 2026?", outcome: "NO", price: 0.6008, sizeUsd: 10, txHash: "paper-1" },
-    { timestamp: Math.floor(now / 1000) - 143, isoTime: new Date(now - 143000).toISOString(), type: "TRADE", side: "SELL", title: "Fed cuts rates before June?", outcome: "YES", price: 0.6077, sizeUsd: 10, txHash: "paper-2" },
-    { timestamp: Math.floor(now / 1000) - 204, isoTime: new Date(now - 204000).toISOString(), type: "TRADE", side: "BUY", title: "GPT-5 released by Q3?", outcome: "YES", price: 0.6039, sizeUsd: 10, txHash: "paper-3" }
-  ];
+  const executionLog = [...backtest.trades]
+    .sort((a, b) => b.timestamp - a.timestamp)
+    .slice(0, 60)
+    .map((trade) => ({
+      ...trade,
+      transactionHash: trade.txHash
+    }));
+
+  const tradeMarkers = backtest.trades.map((trade) => ({
+    timestamp: trade.timestamp,
+    value: trade.equityAfterUsd,
+    pnlUsd: trade.pnlUsd,
+    side: trade.side
+  }));
 
   const stats = {
-    walletBalanceUsd: 3214.19,
-    pnlTodayUsd: 214.19,
-    pnlTodayPct: 0.2242,
-    totalTrades: 1799,
-    activeRiskUsd: 2.9,
-    openPositions: 6,
-    winRate: 0.73,
-    stableBalanceUsd: 3214.19,
+    walletBalanceUsd: backtest.endEquityUsd,
+    pnlTodayUsd,
+    pnlTodayPct,
+    totalTrades: backtest.totalTrades,
+    activeRiskUsd: 0,
+    openPositions: 0,
+    winRate: backtest.winRate,
+    stableBalanceUsd: backtest.endEquityUsd,
     polymarketValueUsd: 0,
     maticBalance: 0,
     maticUsdValue: 0
@@ -411,7 +519,9 @@ function buildPaperSnapshot({ profileAddress, walletAddress, risk }) {
     stats,
     signals,
     executionLog,
-    equity: points,
+    equity: backtest.equity,
+    tradeMarkers,
+    backtest,
     calcPanels: buildCalcPanels({
       primarySignal: signals[0],
       risk,
@@ -490,6 +600,11 @@ async function buildLiveSnapshot({ profileAddress, walletAddress, risk }) {
     closedPositions,
     activity
   });
+  const paperBacktest = buildPaperBacktest({
+    startEquityUsd: PAPER_STARTING_EQUITY_USD,
+    days: PAPER_BACKTEST_DAYS,
+    risk
+  });
 
   const fetchMs = Date.now() - fetchStartedAt;
   const computeStartedAt = Date.now();
@@ -527,6 +642,20 @@ async function buildLiveSnapshot({ profileAddress, walletAddress, risk }) {
     signals,
     executionLog,
     equity,
+    tradeMarkers: [],
+    backtest: {
+      days: paperBacktest.days,
+      startAtIso: paperBacktest.startAtIso,
+      endAtIso: paperBacktest.endAtIso,
+      startEquityUsd: paperBacktest.startEquityUsd,
+      endEquityUsd: paperBacktest.endEquityUsd,
+      pnlUsd: paperBacktest.pnlUsd,
+      returnPct: paperBacktest.returnPct,
+      totalTrades: paperBacktest.totalTrades,
+      wins: paperBacktest.wins,
+      losses: paperBacktest.losses,
+      winRate: paperBacktest.winRate
+    },
     calcPanels,
     diagnostics: {
       source: "polymarket_live",
@@ -677,6 +806,8 @@ export async function GET(request) {
         { timestamp: Math.floor(Date.now() / 1000) - 3600, value: 0 },
         { timestamp: Math.floor(Date.now() / 1000), value: 0 }
       ],
+      tradeMarkers: [],
+      backtest: null,
       calcPanels: buildCalcPanels({
         primarySignal: null,
         risk,

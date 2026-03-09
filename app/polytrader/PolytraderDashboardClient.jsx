@@ -23,6 +23,8 @@ const EMPTY_SNAPSHOT = {
   signals: [],
   executionLog: [],
   equity: [],
+  tradeMarkers: [],
+  backtest: null,
   calcPanels: [],
   diagnostics: {
     warnings: []
@@ -35,6 +37,10 @@ const CHART_MODES = [
   { id: "drawdown", label: "drawdown" },
   { id: "positions", label: "positions" }
 ];
+
+function isAddress(value) {
+  return /^0x[0-9a-f]{40}$/i.test(String(value || "").trim());
+}
 
 function formatUsd(value) {
   const n = Number(value || 0);
@@ -82,14 +88,7 @@ function formatTime(value) {
 }
 
 function buildChartPath(points) {
-  const rows = Array.isArray(points)
-    ? points
-      .map((point) => ({
-        timestamp: Number(point?.timestamp || 0),
-        value: Number(point?.value || 0)
-      }))
-      .filter((point) => Number.isFinite(point.timestamp) && Number.isFinite(point.value))
-    : [];
+  const rows = normalizeSeries(points);
 
   if (rows.length < 2) return "";
 
@@ -112,6 +111,38 @@ function buildChartPath(points) {
       return `${index === 0 ? "M" : "L"}${x.toFixed(2)} ${y.toFixed(2)}`;
     })
     .join(" ");
+}
+
+function buildMarkerDots(points, markers = []) {
+  const rows = normalizeSeries(points);
+  if (rows.length < 2 || !Array.isArray(markers) || markers.length === 0) return [];
+
+  const width = 1000;
+  const height = 560;
+  const pad = 18;
+  const minTime = rows[0].timestamp;
+  const maxTime = rows[rows.length - 1].timestamp;
+  const minValue = Math.min(...rows.map((row) => row.value));
+  const maxValue = Math.max(...rows.map((row) => row.value));
+  const timeSpan = Math.max(1, maxTime - minTime);
+  const valueSpan = Math.max(1e-6, maxValue - minValue);
+
+  return markers
+    .map((marker, index) => {
+      const ts = Number(marker?.timestamp || 0);
+      const value = Number(marker?.value || 0);
+      if (!Number.isFinite(ts) || !Number.isFinite(value)) return null;
+      if (ts < minTime || ts > maxTime) return null;
+      const x = pad + ((ts - minTime) / timeSpan) * (width - pad * 2);
+      const y = height - pad - ((value - minValue) / valueSpan) * (height - pad * 2);
+      return {
+        key: `${ts}-${index}`,
+        x,
+        y,
+        pnlUsd: Number(marker?.pnlUsd || 0)
+      };
+    })
+    .filter(Boolean);
 }
 
 function normalizeSeries(points) {
@@ -199,7 +230,7 @@ function StatCard({ title, value, sub, isDanger = false }) {
 }
 
 export default function PolytraderDashboardClient() {
-  const [mode, setMode] = useState("paper");
+  const [mode, setMode] = useState("live");
   const [chartMode, setChartMode] = useState("linear");
   const [snapshot, setSnapshot] = useState(EMPTY_SNAPSHOT);
   const [loading, setLoading] = useState(false);
@@ -266,8 +297,18 @@ export default function PolytraderDashboardClient() {
   const signals = Array.isArray(snapshot?.signals) ? snapshot.signals : [];
   const executionLog = Array.isArray(snapshot?.executionLog) ? snapshot.executionLog : [];
   const calcPanels = Array.isArray(snapshot?.calcPanels) ? snapshot.calcPanels : [];
+  const tradeMarkers = Array.isArray(snapshot?.tradeMarkers) ? snapshot.tradeMarkers : [];
+  const backtest = snapshot?.backtest || null;
   const account = snapshot?.account || {};
   const execution = snapshot?.execution || {};
+  const profileAddress = account?.profileAddress || snapshot?.profileAddress || "—";
+  const walletAddress = account?.walletAddress || snapshot?.walletAddress || "—";
+  const profileLink = isAddress(profileAddress)
+    ? `https://polymarket.com/profile/${profileAddress}`
+    : "https://polymarket.com";
+  const walletLink = isAddress(walletAddress)
+    ? `https://polygonscan.com/address/${walletAddress}`
+    : "https://polygonscan.com";
 
   const chartSeries = useMemo(
     () => transformChartSeries({
@@ -279,6 +320,10 @@ export default function PolytraderDashboardClient() {
     [chartMode, snapshot?.equity, executionLog, stats.openPositions]
   );
   const chartPath = useMemo(() => buildChartPath(chartSeries), [chartSeries]);
+  const markerDots = useMemo(
+    () => (chartMode === "linear" ? buildMarkerDots(chartSeries, tradeMarkers) : []),
+    [chartMode, chartSeries, tradeMarkers]
+  );
 
   const warningMessages = Array.isArray(snapshot?.diagnostics?.warnings)
     ? snapshot.diagnostics.warnings.filter(Boolean)
@@ -339,6 +384,12 @@ export default function PolytraderDashboardClient() {
           value={isLive ? "LIVE" : "PAPER"}
           sub={isLive ? "real feeds only" : "simulated fills"}
         />
+        <StatCard
+          title="paper 60d backtest"
+          value={backtest ? formatUsd(backtest.endEquityUsd) : "—"}
+          sub={backtest ? `start ${formatUsd(backtest.startEquityUsd)} · ${formatPct(backtest.returnPct)} · ${backtest.totalTrades} trades` : "no backtest data"}
+          isDanger={Boolean(backtest && Number(backtest.returnPct) < 0)}
+        />
       </section>
 
       <section className={styles.sessionStrip}>
@@ -348,21 +399,20 @@ export default function PolytraderDashboardClient() {
         </div>
         <div className={styles.sessionItem}>
           <span>profile</span>
-          <strong title={account?.profileAddress || snapshot?.profileAddress || "—"}>
-            {account?.profileAddress || snapshot?.profileAddress || "—"}
-          </strong>
+          <strong className={styles.addressValue} title={profileAddress}>{profileAddress}</strong>
+          <a className={styles.inlineLink} href={profileLink} target="_blank" rel="noreferrer">open profile</a>
         </div>
         <div className={styles.sessionItem}>
           <span>wallet</span>
-          <strong title={account?.walletAddress || snapshot?.walletAddress || "—"}>
-            {account?.walletAddress || snapshot?.walletAddress || "—"}
-          </strong>
+          <strong className={styles.addressValue} title={walletAddress}>{walletAddress}</strong>
+          <a className={styles.inlineLink} href={walletLink} target="_blank" rel="noreferrer">open wallet</a>
         </div>
         <div className={styles.sessionItem}>
           <span>engine</span>
           <strong className={execution?.canSubmitLiveOrders ? styles.execArmed : styles.execMonitor}>
             {execution?.status || (isLive ? "monitor_only" : "paper")}
           </strong>
+          <a className={styles.inlineLink} href="https://polymarket.com" target="_blank" rel="noreferrer">login polymarket</a>
         </div>
         <div className={styles.sessionWide}>
           <span>status</span>
@@ -422,6 +472,15 @@ export default function PolytraderDashboardClient() {
                 </g>
                 <path d={chartPath} className={styles.equityGlow} />
                 <path d={chartPath} className={styles.equityPath} />
+                {markerDots.map((dot) => (
+                  <circle
+                    key={dot.key}
+                    cx={dot.x}
+                    cy={dot.y}
+                    r="2.8"
+                    className={dot.pnlUsd >= 0 ? styles.tradeWin : styles.tradeLoss}
+                  />
+                ))}
               </svg>
             ) : (
               <div className={styles.chartEmpty}>No equity history available yet.</div>
@@ -430,7 +489,8 @@ export default function PolytraderDashboardClient() {
 
           <p className={styles.switchMeta}>
             {lastSwitchAt ? `last mode switch: ${formatTime(lastSwitchAt)} · ` : ""}view: {chartMode} · feed profile:{" "}
-            {snapshot?.profileAddress || "—"}
+            {profileAddress}
+            {backtest ? ` · 60d paper: ${formatUsd(backtest.startEquityUsd)} → ${formatUsd(backtest.endEquityUsd)}` : ""}
           </p>
         </article>
 
@@ -469,6 +529,9 @@ export default function PolytraderDashboardClient() {
                     <span>{entry.outcome || "—"}</span>
                     <span>{formatUsd(entry.sizeUsd || 0)}</span>
                     <span>{Number.isFinite(Number(entry.price)) ? Number(entry.price).toFixed(4) : "—"}</span>
+                    <span className={Number(entry.pnlUsd) >= 0 ? styles.tradeWinText : styles.tradeLossText}>
+                      {Number.isFinite(Number(entry.pnlUsd)) ? formatSignedUsd(entry.pnlUsd) : "—"}
+                    </span>
                   </li>
                 ))}
               </ul>
