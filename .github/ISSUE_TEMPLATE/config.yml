@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: PolyTrader Technical Handoff
+    url: https://github.com/komalamee/polytrader/blob/main/docs/HANDOFF.md
+    about: Read architecture, runtime, math, and operations before opening an issue.
+  - name: PolyTrader Explainer
+    url: https://github.com/komalamee/polytrader/blob/main/docs/EXPLAINER.md
+    about: Plain-English understanding of purpose, math, and behavior.

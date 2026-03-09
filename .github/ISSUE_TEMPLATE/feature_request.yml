@@ -1,0 +1,60 @@
+name: Feature request
+description: Propose an improvement to PolyTrader
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the outcome, not just implementation.
+  - type: input
+    id: area
+    attributes:
+      label: Area
+      description: UI / API / Worker / Deployment / Docs
+      placeholder: e.g. UI + API
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem statement
+      description: What pain point are we solving?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: What should be built?
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Concrete checklist for done state
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
+  - type: textarea
+    id: risk_impact
+    attributes:
+      label: Risk/math impact
+      description: Any effect on signal logic, sizing, guardrails, or execution
+  - type: textarea
+    id: rollout
+    attributes:
+      label: Rollout notes
+      description: Deploy strategy, migration, fallback
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Requester checklist
+      options:
+        - label: I checked existing docs (`docs/HANDOFF.md`, `docs/EXPLAINER.md`)
+          required: true
+        - label: I described measurable acceptance criteria
+          required: true

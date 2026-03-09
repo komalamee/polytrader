@@ -1,0 +1,69 @@
+name: Bug report
+description: Report a defect in PolyTrader behavior
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Include enough detail for direct reproduction.
+  - type: input
+    id: area
+    attributes:
+      label: Area
+      description: UI / API / Worker / Deployment
+      placeholder: e.g. API + Worker
+    validations:
+      required: true
+  - type: textarea
+    id: summary
+    attributes:
+      label: Bug summary
+      description: What is broken?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Exact steps, commands, and inputs
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / API payloads
+      description: Include relevant snippets only (no secrets)
+  - type: checkboxes
+    id: risk
+    attributes:
+      label: Risk scope
+      options:
+        - label: This affects trading/execution behavior
+        - label: This affects risk guardrails
+        - label: This is UI-only
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Reporter checklist
+      options:
+        - label: I confirmed no secrets are included
+          required: true
+        - label: I included reproducible steps
+          required: true

@@ -65,3 +65,9 @@ Prioritize correctness and risk controls over feature velocity.
 ## Known production blocker
 Current server region is geoblocked for order placement on Polymarket CLOB.
 Expected live status is `monitor_only` until infrastructure moves to a supported region.
+
+
+## GitHub templates
+Use the built-in templates for every change:
+- PR template: `.github/PULL_REQUEST_TEMPLATE.md`
+- Issues: `.github/ISSUE_TEMPLATE/bug_report.yml`, `.github/ISSUE_TEMPLATE/feature_request.yml`

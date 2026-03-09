@@ -7,6 +7,7 @@ Standalone PolyTrader app powering `hive.komalamin.com/polytrader`.
 - Plain-English explainer: `docs/EXPLAINER.md`
 - Agent coding playbook: `docs/AGENT_PLAYBOOK.md`
 - Env template: `.env.polytrader.example`
+- GitHub contribution templates: `.github/PULL_REQUEST_TEMPLATE.md`, `.github/ISSUE_TEMPLATE/*`
 
 ## What this repo contains
 - Next.js dashboard UI (`/polytrader`)
