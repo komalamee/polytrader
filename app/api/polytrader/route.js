@@ -556,6 +556,7 @@ function readRiskLocks() {
 
 function readExecutionState({ mode, profileAddress, walletAddress }) {
   const accountLabel = String(process.env.POLYTRADER_ACCOUNT_LABEL || "polytrader").trim() || "polytrader";
+  const executionEngineAvailable = String(process.env.POLYTRADER_EXECUTION_ENGINE_ENABLED || "").trim().toLowerCase() === "true";
   const armedLive = String(process.env.POLYTRADER_ARM_LIVE || "").trim().toLowerCase() === "true";
   const hasApiCreds = Boolean(
     String(process.env.POLYMARKET_API_KEY || "").trim()
@@ -564,11 +565,13 @@ function readExecutionState({ mode, profileAddress, walletAddress }) {
   );
   const hasSigner = Boolean(normalizeAddress(walletAddress));
 
-  const canSubmitLiveOrders = mode === "live" && armedLive && hasApiCreds && hasSigner;
+  const canSubmitLiveOrders = mode === "live" && executionEngineAvailable && armedLive && hasApiCreds && hasSigner;
   const status = canSubmitLiveOrders ? "armed_live" : (mode === "live" ? "monitor_only" : "paper");
 
   let reason = "Paper mode active.";
-  if (mode === "live" && !armedLive) {
+  if (mode === "live" && !executionEngineAvailable) {
+    reason = "Live execution engine is not enabled yet. This build is monitoring + signal mode only.";
+  } else if (mode === "live" && !armedLive) {
     reason = "Live order submission is not armed. Set POLYTRADER_ARM_LIVE=true to enable trading.";
   } else if (mode === "live" && !hasApiCreds) {
     reason = "Polymarket API credentials are missing (POLYMARKET_API_KEY/SECRET/PASSPHRASE).";
@@ -582,6 +585,7 @@ function readExecutionState({ mode, profileAddress, walletAddress }) {
     accountLabel,
     profileAddress,
     walletAddress,
+    executionEngineAvailable,
     armedLive,
     hasApiCreds,
     hasSigner,
