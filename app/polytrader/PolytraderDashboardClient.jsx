@@ -29,6 +29,13 @@ const EMPTY_SNAPSHOT = {
   }
 };
 
+const CHART_MODES = [
+  { id: "linear", label: "linear" },
+  { id: "log", label: "log" },
+  { id: "drawdown", label: "drawdown" },
+  { id: "positions", label: "positions" }
+];
+
 function formatUsd(value) {
   const n = Number(value || 0);
   return new Intl.NumberFormat("en-US", {
@@ -107,6 +114,80 @@ function buildChartPath(points) {
     .join(" ");
 }
 
+function normalizeSeries(points) {
+  return Array.isArray(points)
+    ? points
+      .map((point) => ({
+        timestamp: Number(point?.timestamp || 0),
+        value: Number(point?.value || 0)
+      }))
+      .filter((point) => Number.isFinite(point.timestamp) && Number.isFinite(point.value))
+      .sort((a, b) => a.timestamp - b.timestamp)
+    : [];
+}
+
+function buildPositionsSeries(executionLog = [], fallbackSeries = [], fallbackOpenPositions = 0) {
+  const rows = Array.isArray(executionLog)
+    ? executionLog
+      .map((entry) => {
+        const ts = Number(entry?.timestamp || 0);
+        const side = String(entry?.side || "").toUpperCase();
+        const usd = Number(entry?.sizeUsd || 0);
+        return Number.isFinite(ts) && Number.isFinite(usd)
+          ? { timestamp: ts, side, sizeUsd: usd }
+          : null;
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.timestamp - b.timestamp)
+    : [];
+
+  if (rows.length >= 2) {
+    let running = 0;
+    return rows.map((row) => {
+      if (row.side === "BUY") running += row.sizeUsd;
+      if (row.side === "SELL") running -= row.sizeUsd;
+      return {
+        timestamp: row.timestamp,
+        value: running
+      };
+    });
+  }
+
+  if (fallbackSeries.length >= 2) {
+    const open = Number(fallbackOpenPositions || 0);
+    return fallbackSeries.map((point) => ({ ...point, value: open }));
+  }
+
+  return fallbackSeries;
+}
+
+function transformChartSeries({ mode, equity, executionLog, openPositions }) {
+  const base = normalizeSeries(equity);
+  if (base.length < 2) return base;
+
+  if (mode === "log") {
+    return base.map((row) => ({
+      ...row,
+      value: Math.log10(Math.max(row.value, 1e-6))
+    }));
+  }
+
+  if (mode === "drawdown") {
+    let peak = -Infinity;
+    return base.map((row) => {
+      peak = Math.max(peak, row.value);
+      const drawdown = peak > 0 ? (row.value - peak) / peak : 0;
+      return { ...row, value: drawdown };
+    });
+  }
+
+  if (mode === "positions") {
+    return buildPositionsSeries(executionLog, base, openPositions);
+  }
+
+  return base;
+}
+
 function StatCard({ title, value, sub, isDanger = false }) {
   return (
     <article className={styles.statCard}>
@@ -119,6 +200,7 @@ function StatCard({ title, value, sub, isDanger = false }) {
 
 export default function PolytraderDashboardClient() {
   const [mode, setMode] = useState("paper");
+  const [chartMode, setChartMode] = useState("linear");
   const [snapshot, setSnapshot] = useState(EMPTY_SNAPSHOT);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -179,14 +261,29 @@ export default function PolytraderDashboardClient() {
     setLastSwitchAt(new Date().toISOString());
   }
 
-  const chartPath = useMemo(() => buildChartPath(snapshot.equity), [snapshot.equity]);
-
-  const warning = snapshot?.diagnostics?.warnings?.[0] || "";
   const stats = snapshot?.stats || EMPTY_SNAPSHOT.stats;
   const risk = snapshot?.risk || EMPTY_SNAPSHOT.risk;
   const signals = Array.isArray(snapshot?.signals) ? snapshot.signals : [];
   const executionLog = Array.isArray(snapshot?.executionLog) ? snapshot.executionLog : [];
   const calcPanels = Array.isArray(snapshot?.calcPanels) ? snapshot.calcPanels : [];
+  const account = snapshot?.account || {};
+  const execution = snapshot?.execution || {};
+
+  const chartSeries = useMemo(
+    () => transformChartSeries({
+      mode: chartMode,
+      equity: snapshot?.equity,
+      executionLog,
+      openPositions: stats.openPositions
+    }),
+    [chartMode, snapshot?.equity, executionLog, stats.openPositions]
+  );
+  const chartPath = useMemo(() => buildChartPath(chartSeries), [chartSeries]);
+
+  const warningMessages = Array.isArray(snapshot?.diagnostics?.warnings)
+    ? snapshot.diagnostics.warnings.filter(Boolean)
+    : [];
+  const warning = warningMessages[0] || "";
 
   return (
     <main className={styles.wrap}>
@@ -244,6 +341,35 @@ export default function PolytraderDashboardClient() {
         />
       </section>
 
+      <section className={styles.sessionStrip}>
+        <div className={styles.sessionItem}>
+          <span>account</span>
+          <strong>{account?.label || "polytrader"}</strong>
+        </div>
+        <div className={styles.sessionItem}>
+          <span>profile</span>
+          <strong title={account?.profileAddress || snapshot?.profileAddress || "—"}>
+            {account?.profileAddress || snapshot?.profileAddress || "—"}
+          </strong>
+        </div>
+        <div className={styles.sessionItem}>
+          <span>wallet</span>
+          <strong title={account?.walletAddress || snapshot?.walletAddress || "—"}>
+            {account?.walletAddress || snapshot?.walletAddress || "—"}
+          </strong>
+        </div>
+        <div className={styles.sessionItem}>
+          <span>engine</span>
+          <strong className={execution?.canSubmitLiveOrders ? styles.execArmed : styles.execMonitor}>
+            {execution?.status || (isLive ? "monitor_only" : "paper")}
+          </strong>
+        </div>
+        <div className={styles.sessionWide}>
+          <span>status</span>
+          <strong>{execution?.reason || (isLive ? "Live data monitoring only." : "Paper mode active.")}</strong>
+        </div>
+      </section>
+
       <section className={styles.board}>
         <aside className={styles.leftRail}>
           {calcPanels.map((panel) => (
@@ -266,10 +392,16 @@ export default function PolytraderDashboardClient() {
           <div className={styles.chartHead}>
             <p>equity curve · lmsr bayesian strategy</p>
             <div className={styles.headPills}>
-              <span className={styles.pillActive}>linear</span>
-              <span className={styles.pill}>log</span>
-              <span className={styles.pill}>drawdown</span>
-              <span className={styles.pill}>positions</span>
+              {CHART_MODES.map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  className={chartMode === option.id ? styles.pillActive : styles.pill}
+                  onClick={() => setChartMode(option.id)}
+                >
+                  {option.label}
+                </button>
+              ))}
             </div>
           </div>
 
@@ -297,8 +429,8 @@ export default function PolytraderDashboardClient() {
           </div>
 
           <p className={styles.switchMeta}>
-            {lastSwitchAt ? `last mode switch: ${formatTime(lastSwitchAt)} · ` : ""}
-            feed profile: {snapshot?.profileAddress || "—"}
+            {lastSwitchAt ? `last mode switch: ${formatTime(lastSwitchAt)} · ` : ""}view: {chartMode} · feed profile:{" "}
+            {snapshot?.profileAddress || "—"}
           </p>
         </article>
 

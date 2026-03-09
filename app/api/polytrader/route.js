@@ -554,6 +554,43 @@ function readRiskLocks() {
   };
 }
 
+function readExecutionState({ mode, profileAddress, walletAddress }) {
+  const accountLabel = String(process.env.POLYTRADER_ACCOUNT_LABEL || "polytrader").trim() || "polytrader";
+  const armedLive = String(process.env.POLYTRADER_ARM_LIVE || "").trim().toLowerCase() === "true";
+  const hasApiCreds = Boolean(
+    String(process.env.POLYMARKET_API_KEY || "").trim()
+    && String(process.env.POLYMARKET_API_SECRET || "").trim()
+    && String(process.env.POLYMARKET_API_PASSPHRASE || "").trim()
+  );
+  const hasSigner = Boolean(normalizeAddress(walletAddress));
+
+  const canSubmitLiveOrders = mode === "live" && armedLive && hasApiCreds && hasSigner;
+  const status = canSubmitLiveOrders ? "armed_live" : (mode === "live" ? "monitor_only" : "paper");
+
+  let reason = "Paper mode active.";
+  if (mode === "live" && !armedLive) {
+    reason = "Live order submission is not armed. Set POLYTRADER_ARM_LIVE=true to enable trading.";
+  } else if (mode === "live" && !hasApiCreds) {
+    reason = "Polymarket API credentials are missing (POLYMARKET_API_KEY/SECRET/PASSPHRASE).";
+  } else if (mode === "live" && !hasSigner) {
+    reason = "Wallet signer unavailable for live order submission.";
+  } else if (canSubmitLiveOrders) {
+    reason = "Live order submission is armed.";
+  }
+
+  return {
+    accountLabel,
+    profileAddress,
+    walletAddress,
+    armedLive,
+    hasApiCreds,
+    hasSigner,
+    canSubmitLiveOrders,
+    status,
+    reason
+  };
+}
+
 function resolveAddresses(searchParams) {
   const configuredProfile = normalizeAddress(
     searchParams.get("profile")
@@ -581,11 +618,31 @@ export async function GET(request) {
   const mode = String(url.searchParams.get("mode") || "paper").toLowerCase() === "live" ? "live" : "paper";
   const risk = readRiskLocks();
   const { profileAddress, walletAddress } = resolveAddresses(url.searchParams);
+  const execution = readExecutionState({ mode, profileAddress, walletAddress });
 
   try {
-    const snapshot = mode === "live"
+    const baseSnapshot = mode === "live"
       ? await buildLiveSnapshot({ profileAddress, walletAddress, risk })
       : buildPaperSnapshot({ profileAddress, walletAddress, risk });
+
+    const warnings = Array.isArray(baseSnapshot?.diagnostics?.warnings) ? baseSnapshot.diagnostics.warnings : [];
+    if (mode === "live" && !execution.canSubmitLiveOrders && !warnings.includes(execution.reason)) {
+      warnings.unshift(execution.reason);
+    }
+
+    const snapshot = {
+      ...baseSnapshot,
+      account: {
+        label: execution.accountLabel,
+        profileAddress,
+        walletAddress
+      },
+      execution,
+      diagnostics: {
+        ...(baseSnapshot.diagnostics || {}),
+        warnings
+      }
+    };
 
     return NextResponse.json(snapshot, {
       headers: { "Cache-Control": "no-store" }
@@ -624,7 +681,13 @@ export async function GET(request) {
       diagnostics: {
         source: "fallback",
         warnings: [String(error?.message || error || "unknown_error")]
-      }
+      },
+      account: {
+        label: execution.accountLabel,
+        profileAddress,
+        walletAddress
+      },
+      execution
     };
 
     return NextResponse.json(fallback, {

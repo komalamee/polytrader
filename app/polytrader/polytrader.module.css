@@ -110,6 +110,53 @@
   flex-shrink: 0;
 }
 
+.sessionStrip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) 1.4fr;
+  gap: 0;
+  border-bottom: 1px solid #123e29;
+  background: rgba(4, 14, 9, 0.92);
+  flex-shrink: 0;
+}
+
+.sessionItem,
+.sessionWide {
+  min-width: 0;
+  padding: 6px 10px;
+  border-right: 1px solid #123e29;
+}
+
+.sessionWide {
+  border-right: 0;
+}
+
+.sessionItem span,
+.sessionWide span {
+  display: block;
+  color: #5aa07a;
+  text-transform: uppercase;
+  font-size: 9px;
+  margin-bottom: 3px;
+}
+
+.sessionItem strong,
+.sessionWide strong {
+  display: block;
+  color: #a7ffd2;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.execArmed {
+  color: #58ffae !important;
+}
+
+.execMonitor {
+  color: #ffd8a2 !important;
+}
+
 .statCard {
   background: rgba(4, 16, 10, 0.95);
   border-right: 1px solid #123e29;
@@ -259,7 +306,12 @@
 
 .pill,
 .pillActive {
+  appearance: none;
+  border-radius: 0;
   border: 1px solid #21583b;
+  background: transparent;
+  font-family: inherit;
+  cursor: pointer;
   padding: 2px 6px;
   text-transform: lowercase;
   font-size: 10px;
@@ -431,6 +483,10 @@
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
+  .sessionStrip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .board {
     grid-template-columns: 240px 1fr 290px;
   }
@@ -444,6 +500,20 @@
 
   .statsRow {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .sessionStrip {
+    grid-template-columns: 1fr;
+  }
+
+  .sessionItem,
+  .sessionWide {
+    border-right: 0;
+    border-bottom: 1px solid #123e29;
+  }
+
+  .sessionWide {
+    border-bottom: 0;
   }
 
   .board {
