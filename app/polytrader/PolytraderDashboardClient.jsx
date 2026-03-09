@@ -37,9 +37,16 @@ const CHART_MODES = [
   { id: "drawdown", label: "drawdown" },
   { id: "positions", label: "positions" }
 ];
+const CHART_WIDTH = 1000;
+const CHART_HEIGHT = 560;
+const CHART_PAD = 18;
 
 function isAddress(value) {
   return /^0x[0-9a-f]{40}$/i.test(String(value || "").trim());
+}
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
 }
 
 function formatUsd(value) {
@@ -87,27 +94,68 @@ function formatTime(value) {
   });
 }
 
-function buildChartPath(points) {
-  const rows = normalizeSeries(points);
+function formatDateTime(value) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString("en-GB", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false
+  });
+}
 
-  if (rows.length < 2) return "";
-
-  const width = 1000;
-  const height = 560;
-  const pad = 18;
-
+function buildChartMeta(rows) {
+  if (!Array.isArray(rows) || rows.length < 2) return null;
   const minTime = rows[0].timestamp;
   const maxTime = rows[rows.length - 1].timestamp;
   const minValue = Math.min(...rows.map((row) => row.value));
   const maxValue = Math.max(...rows.map((row) => row.value));
 
-  const timeSpan = Math.max(1, maxTime - minTime);
-  const valueSpan = Math.max(1e-6, maxValue - minValue);
+  return {
+    minTime,
+    maxTime,
+    minValue,
+    maxValue,
+    timeSpan: Math.max(1, maxTime - minTime),
+    valueSpan: Math.max(1e-6, maxValue - minValue)
+  };
+}
+
+function mapToChart(meta, timestamp, value) {
+  const x = CHART_PAD + ((timestamp - meta.minTime) / meta.timeSpan) * (CHART_WIDTH - CHART_PAD * 2);
+  const y = CHART_HEIGHT - CHART_PAD - ((value - meta.minValue) / meta.valueSpan) * (CHART_HEIGHT - CHART_PAD * 2);
+  return { x, y };
+}
+
+function findNearestPoint(rows, targetTimestamp) {
+  if (!rows.length) return null;
+  let nearest = rows[0];
+  let distance = Math.abs(rows[0].timestamp - targetTimestamp);
+  for (let i = 1; i < rows.length; i += 1) {
+    const nextDistance = Math.abs(rows[i].timestamp - targetTimestamp);
+    if (nextDistance < distance) {
+      nearest = rows[i];
+      distance = nextDistance;
+    }
+  }
+  return nearest;
+}
+
+function buildChartPath(points) {
+  const rows = normalizeSeries(points);
+
+  if (rows.length < 2) return "";
+  const meta = buildChartMeta(rows);
+  if (!meta) return "";
 
   return rows
     .map((row, index) => {
-      const x = pad + ((row.timestamp - minTime) / timeSpan) * (width - pad * 2);
-      const y = height - pad - ((row.value - minValue) / valueSpan) * (height - pad * 2);
+      const { x, y } = mapToChart(meta, row.timestamp, row.value);
       return `${index === 0 ? "M" : "L"}${x.toFixed(2)} ${y.toFixed(2)}`;
     })
     .join(" ");
@@ -116,27 +164,20 @@ function buildChartPath(points) {
 function buildMarkerDots(points, markers = []) {
   const rows = normalizeSeries(points);
   if (rows.length < 2 || !Array.isArray(markers) || markers.length === 0) return [];
-
-  const width = 1000;
-  const height = 560;
-  const pad = 18;
-  const minTime = rows[0].timestamp;
-  const maxTime = rows[rows.length - 1].timestamp;
-  const minValue = Math.min(...rows.map((row) => row.value));
-  const maxValue = Math.max(...rows.map((row) => row.value));
-  const timeSpan = Math.max(1, maxTime - minTime);
-  const valueSpan = Math.max(1e-6, maxValue - minValue);
+  const meta = buildChartMeta(rows);
+  if (!meta) return [];
 
   return markers
     .map((marker, index) => {
       const ts = Number(marker?.timestamp || 0);
       const value = Number(marker?.value || 0);
       if (!Number.isFinite(ts) || !Number.isFinite(value)) return null;
-      if (ts < minTime || ts > maxTime) return null;
-      const x = pad + ((ts - minTime) / timeSpan) * (width - pad * 2);
-      const y = height - pad - ((value - minValue) / valueSpan) * (height - pad * 2);
+      if (ts < meta.minTime || ts > meta.maxTime) return null;
+      const { x, y } = mapToChart(meta, ts, value);
       return {
         key: `${ts}-${index}`,
+        timestamp: ts,
+        value,
         x,
         y,
         pnlUsd: Number(marker?.pnlUsd || 0)
@@ -236,6 +277,7 @@ export default function PolytraderDashboardClient() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [lastSwitchAt, setLastSwitchAt] = useState(null);
+  const [hoverPoint, setHoverPoint] = useState(null);
 
   const isLive = mode === "live";
 
@@ -319,11 +361,64 @@ export default function PolytraderDashboardClient() {
     }),
     [chartMode, snapshot?.equity, executionLog, stats.openPositions]
   );
-  const chartPath = useMemo(() => buildChartPath(chartSeries), [chartSeries]);
+  const chartRows = useMemo(() => normalizeSeries(chartSeries), [chartSeries]);
+  const chartMeta = useMemo(() => buildChartMeta(chartRows), [chartRows]);
+  const chartPath = useMemo(() => buildChartPath(chartRows), [chartRows]);
   const markerDots = useMemo(
-    () => (chartMode === "linear" ? buildMarkerDots(chartSeries, tradeMarkers) : []),
-    [chartMode, chartSeries, tradeMarkers]
+    () => (chartMode === "linear" ? buildMarkerDots(chartRows, tradeMarkers) : []),
+    [chartMode, chartRows, tradeMarkers]
   );
+  const startPoint = useMemo(() => {
+    if (!chartMeta || chartRows.length < 1) return null;
+    const start = chartRows[0];
+    const coords = mapToChart(chartMeta, start.timestamp, start.value);
+    return { ...start, ...coords };
+  }, [chartMeta, chartRows]);
+  const grossPnlUsd = useMemo(() => {
+    if (backtest && Number.isFinite(Number(backtest?.pnlUsd))) {
+      return Number(backtest.pnlUsd);
+    }
+    if (chartRows.length >= 2) {
+      return Number(chartRows[chartRows.length - 1].value) - Number(chartRows[0].value);
+    }
+    return null;
+  }, [backtest, chartRows]);
+  const grossPnlPct = useMemo(() => {
+    if (backtest && Number.isFinite(Number(backtest?.returnPct))) {
+      return Number(backtest.returnPct);
+    }
+    if (chartRows.length >= 2) {
+      const start = Number(chartRows[0].value);
+      const end = Number(chartRows[chartRows.length - 1].value);
+      return start > 0 ? (end - start) / start : null;
+    }
+    return null;
+  }, [backtest, chartRows]);
+  const tooltipBox = useMemo(() => {
+    if (!hoverPoint) return null;
+    const width = 220;
+    const height = 44;
+    const x = Math.min(CHART_WIDTH - width - 8, Math.max(8, hoverPoint.x + 8));
+    const y = Math.min(CHART_HEIGHT - height - 8, Math.max(8, hoverPoint.y - height - 8));
+    return { x, y, width, height };
+  }, [hoverPoint]);
+
+  function onChartMove(event) {
+    if (!chartMeta || chartRows.length < 2) return;
+    const bounds = event.currentTarget.getBoundingClientRect();
+    if (!bounds.width) return;
+    const x = ((event.clientX - bounds.left) / bounds.width) * CHART_WIDTH;
+    const ratio = clamp((x - CHART_PAD) / (CHART_WIDTH - CHART_PAD * 2), 0, 1);
+    const targetTimestamp = chartMeta.minTime + ratio * chartMeta.timeSpan;
+    const nearest = findNearestPoint(chartRows, targetTimestamp);
+    if (!nearest) return;
+    const coords = mapToChart(chartMeta, nearest.timestamp, nearest.value);
+    setHoverPoint({ ...nearest, ...coords });
+  }
+
+  function onChartLeave() {
+    setHoverPoint(null);
+  }
 
   const warningMessages = Array.isArray(snapshot?.diagnostics?.warnings)
     ? snapshot.diagnostics.warnings.filter(Boolean)
@@ -367,6 +462,12 @@ export default function PolytraderDashboardClient() {
           value={formatSignedUsd(stats.pnlTodayUsd)}
           sub={formatPct(stats.pnlTodayPct)}
           isDanger={Number(stats.pnlTodayUsd) < 0}
+        />
+        <StatCard
+          title="gross pnl (total)"
+          value={grossPnlUsd === null ? "—" : formatSignedUsd(grossPnlUsd)}
+          sub={grossPnlPct === null ? "from equity baseline" : formatPct(grossPnlPct)}
+          isDanger={Number(grossPnlUsd) < 0}
         />
         <StatCard
           title="trades done"
@@ -472,6 +573,14 @@ export default function PolytraderDashboardClient() {
                 </g>
                 <path d={chartPath} className={styles.equityGlow} />
                 <path d={chartPath} className={styles.equityPath} />
+                {startPoint ? (
+                  <g className={styles.startMarker}>
+                    <circle cx={startPoint.x} cy={startPoint.y} r="3.3" className={styles.startDot} />
+                    <text x={Math.min(startPoint.x + 8, CHART_WIDTH - 130)} y={Math.max(18, startPoint.y - 8)} className={styles.startLabel}>
+                      START {formatUsd(startPoint.value)}
+                    </text>
+                  </g>
+                ) : null}
                 {markerDots.map((dot) => (
                   <circle
                     key={dot.key}
@@ -481,6 +590,28 @@ export default function PolytraderDashboardClient() {
                     className={dot.pnlUsd >= 0 ? styles.tradeWin : styles.tradeLoss}
                   />
                 ))}
+                {hoverPoint && tooltipBox ? (
+                  <g className={styles.hoverLayer}>
+                    <line x1={hoverPoint.x} y1={CHART_PAD} x2={hoverPoint.x} y2={CHART_HEIGHT - CHART_PAD} className={styles.hoverLine} />
+                    <circle cx={hoverPoint.x} cy={hoverPoint.y} r="4.2" className={styles.hoverDot} />
+                    <rect x={tooltipBox.x} y={tooltipBox.y} width={tooltipBox.width} height={tooltipBox.height} rx="4" className={styles.hoverBox} />
+                    <text x={tooltipBox.x + 8} y={tooltipBox.y + 17} className={styles.hoverText}>
+                      {formatDateTime(new Date(hoverPoint.timestamp * 1000))}
+                    </text>
+                    <text x={tooltipBox.x + 8} y={tooltipBox.y + 34} className={styles.hoverValue}>
+                      {formatUsd(hoverPoint.value)}
+                    </text>
+                  </g>
+                ) : null}
+                <rect
+                  x="0"
+                  y="0"
+                  width={CHART_WIDTH}
+                  height={CHART_HEIGHT}
+                  className={styles.chartHitArea}
+                  onMouseMove={onChartMove}
+                  onMouseLeave={onChartLeave}
+                />
               </svg>
             ) : (
               <div className={styles.chartEmpty}>No equity history available yet.</div>

@@ -105,7 +105,7 @@
 
 .statsRow {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   border-bottom: 1px solid #123e29;
   flex-shrink: 0;
 }
@@ -390,6 +390,59 @@
 
 .tradeLoss {
   fill: #ff9696;
+}
+
+.startMarker {
+  pointer-events: none;
+}
+
+.startDot {
+  fill: #f7ff9f;
+  stroke: #0a180f;
+  stroke-width: 1;
+}
+
+.startLabel {
+  fill: #d8f9b4;
+  font-size: 10px;
+}
+
+.hoverLayer {
+  pointer-events: none;
+}
+
+.hoverLine {
+  stroke: rgba(187, 255, 223, 0.65);
+  stroke-width: 1;
+  stroke-dasharray: 3 4;
+}
+
+.hoverDot {
+  fill: #b8ffdd;
+  stroke: #0f2017;
+  stroke-width: 1.4;
+}
+
+.hoverBox {
+  fill: rgba(6, 26, 17, 0.96);
+  stroke: rgba(116, 221, 169, 0.9);
+  stroke-width: 1;
+}
+
+.hoverText {
+  fill: #8fd9b2;
+  font-size: 10px;
+}
+
+.hoverValue {
+  fill: #c9ffe8;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.chartHitArea {
+  fill: transparent;
+  cursor: crosshair;
 }
 
 .chartEmpty {
